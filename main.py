@@ -1,76 +1,63 @@
 import requests
 import os
+import time
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-API_URL = 'https://fastdl.app/api/convert'
 SAVE_DIR = 'reels'
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-def get_next_filename(base_dir, base_name="Reels", ext=".mp4"):
-    i = 1
-    while True:
-        file_name = f"{base_name}{i}{ext}"
-        full_path = os.path.join(base_dir, file_name)
-        if not os.path.exists(full_path):
-            return file_name
-        i += 1
+def set_chrome_driver():
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    return webdriver.Chrome(options=options)
 
-def download_video(insta_url, tokens):
-    payload = tokens.copy()
-    payload['url'] = insta_url
-    headers = {
-        "Content-Type": "application/json",
-        "Referer": "https://fastdl.app/en",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
+# Previous download_video function is modified
+# I can't get [ts, _ts, _tsc, _s] tokens, so I changed the method
+# Using selenium
+def download_video(insta_url, file_name):
+    driver = set_chrome_driver()
+    driver.get('https://fastdl.app/en')
 
-    res = requests.post(API_URL, json=payload, headers=headers)
+    wait = WebDriverWait(driver, 15)
+
+    input_box = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input.search-form__input")))
+    input_box.clear()
+    input_box.send_keys(insta_url)
+
+    download_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button.search-form__button')))
+    download_btn.click()
+
+    video_link_elem = wait.until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, 'a.button__download'))
+    )
+    video_url = video_link_elem.get_attribute('href')
+    #print(f"Download link is taken: {video_url}") # For debugging
+
+    res = requests.get(video_url, stream=True)
     res.raise_for_status()
-    data = res.json()
-
-    video_info_list = data.get('url')
-    if not video_info_list or not isinstance(video_info_list, list):
-        print(f"Download failed / No links: {insta_url}")
-        print("Server response: ", data)
-        return
-
-    video_url = video_info_list[0].get('url')
-    if not video_url:
-        print(f"Download failed / No URL found: {insta_url}")
-        print("Server response: ", data)
-        return
-
-    file_name = get_next_filename(SAVE_DIR, base_name="Reels", ext=".mp4")
-
     save_path = os.path.join(SAVE_DIR, file_name)
-
-    print(f"{file_name} Download starting...")
-    video_res = requests.get(video_url, stream=True)
-    video_res.raise_for_status()
-
     with open(save_path, 'wb') as f:
-        for chunk in video_res.iter_content(chunk_size=8192):
+        for chunk in res.iter_content(chunk_size=8192):
             if chunk:
                 f.write(chunk)
     print(f"{file_name} Download success!")
 
-def read_links_from_file(filename):
-    with open(filename, 'r', encoding='utf-8') as f:
-        content = f.read()
+def main():
+    with open('links.txt', 'r') as f:
+        content = f.read().strip()
     links = [link.strip() for link in content.split(',') if link.strip()]
-    return links
+
+    for i, link in enumerate(links, 1):
+        file_name = f"Reels{i}.mp4"
+        print(f"[{i}/{len(links)}] {link} Download starting...")
+        download_video(link, file_name)
 
 if __name__ == "__main__":
-    # tokens part is hard-coded
-    tokens = {
-        "ts": 1754757004017,
-        "_ts": 1753864701452,
-        "_tsc": 0,
-        "_s": "6990555ce22283b10e94c3c5c51644cff8c4afb63852225343c3d935381b76c7"
-    }
-    links = read_links_from_file('links.txt')
+    main()
 
-    for link in links:
-        try:
-            download_video(link, tokens)
-        except Exception as e:
-            print(f"ERROR: {e}")
